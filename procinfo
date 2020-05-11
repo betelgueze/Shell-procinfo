@@ -1,0 +1,189 @@
+#!/bin/ksh
+usage="procinfo analyzes a given program and prints required information
+usage: procinfo [options] program [args...]
+options:
+ -e        prints executed programs
+ -w regexp prints files opened for write access with a name matching regexp
+ -r regexp prints files opened for read access with a name matching regexp
+ -v regexp prints files opened for write access with a name not matching regexp
+ -b regexp prints files opened for read access with a name not matching regexp
+ -t file   do not run strace/truss, use file as its output 
+"
+OPTION=0;
+EXEC=0;
+RFILES=0;
+WFILES=0;
+STDIN=1;
+COUNT=0;
+SYSNAME=`uname`
+while getopts "ew:r:v:b:t:" OPTION
+do 
+     COUNT=$COUNT+1
+     case $OPTION in
+      
+	  e)
+	    EXEC=1
+	  ;;
+	  w)
+	    WREGEXP=$OPTARG
+	    if [ $WFILES -ne 1 ]
+	    then 
+	      WBOLREGEXP=0
+	    else
+	      printf "$usage" >&2
+	      exit 1
+	    fi
+	    WFILES=1
+	  ;;
+	  v)
+	    WREGEXP=$OPTARG
+	    if [ $WFILES -ne 1 ]
+	    then 
+	      WBOLREGEXP=1
+	    else
+	      printf "$usage" >&2
+	      exit 1
+	    fi
+	    WFILES=1
+	  ;;
+	  r)
+	    RREGEXP="$OPTARG"
+	    if [ $RFILES -ne 1 ]
+	    then 
+	      RBOLREGEXP=0
+	    else
+	      printf "$usage" >&2
+	      exit 1
+	    fi
+	    RFILES=1
+	  ;;
+	  b)
+	    RREGEXP=$OPTARG
+	    if [ $RFILES -ne 1 ]
+	    then 
+	      RBOLREGEXP=1
+	    else
+	      printf "$usage" >&2
+	      exit 1
+	    fi
+	    RFILES=1
+	  ;;
+	  t)
+	    STDIN=0
+	    FIN=$OPTARG
+	  ;;  
+	  ?)
+	    printf "$usage" >&2
+	    exit 1
+	  ;;
+     esac
+done
+if [[ $COUNT = 0 ]]
+then
+ echo "$usage" >&2
+exit 1
+fi
+
+shift `expr $OPTIND - 1` 
+
+###############################################################################
+if [ $STDIN -ne 1 ]
+then
+    TMPFILE=$FIN
+else
+    TMPFILE=`mktemp tmp.XXXXXX`
+    if [ $SYSNAME = "Linux" ]
+    then
+      strace -o $TMPFILE "$@" >/dev/null 2>/dev/null
+    fi
+    if [ $SYSNAME = "FreeBSD" ]
+    then
+      truss -o $TMPFILE "$@" >/dev/null 2>/dev/null
+    fi
+    if [ $SYSNAME = "SunOS" ]
+    then
+      truss -o $TMPFILE "$@" >/dev/null 2>/dev/null
+    fi    
+fi
+
+
+###############################################################################
+if [ $EXEC -eq 1 ]
+then
+  echo '=== Run processes ==='
+  if [ $SYSNAME = "Linux" ];
+    then
+      grep "execve\|[^f]stat64" $TMPFILE | grep -v lstat64 | grep -v  "= -" | cut -d "\"" -f 2  | sort | uniq -u
+  elif [ $SYSNAME = "FreeBSD" ];
+      then
+	grep "execve\|[^f]stat64" $TMPFILE | grep -v lstat64 | grep -v "= -" | grep -v -e ERR | grep -v -e ENOENT | cut -d "\"" -f 2  | sort | uniq -u
+  elif [ $SYSNAME = "SunOS" ];
+      then
+	grep "execve\|[^f]*stat64" $TMPFILE | grep -v lstat64 | grep -v "= -" | grep -v -e ERR | grep -v -e ENOENT | cut -d "\"" -f 2  | sort | uniq -u
+  fi 
+fi
+###############################################################################
+if [ $WFILES -eq 1 ]
+then
+  echo '=== Written files ==='
+  if [ $WBOLREGEXP -ne 1 ]
+    then
+    if [ $SYSNAME = "Linux" ];
+      then
+	grep "open\|creat" $TMPFILE | grep WR | grep -v -e "= -" | grep -v -i "UNFINISHED" | cut -d "\"" -f 2 | grep -e "$WREGEXP" | sort | uniq -u
+    elif [ $SYSNAME = "FreeBSD" ];
+      then
+	grep "open\|creat" $TMPFILE | grep WR | grep -v -e ERR | grep -v -i "UNFINISHED" | grep -v -e ENOENT | grep -v -e "= -" | cut -d "\"" -f 2 | grep -e "$WREGEXP" | sort | uniq -u
+    elif [ $SYSNAME = "SunOS" ];
+      then
+	grep "open\|creat" $TMPFILE | grep WR | grep -v -e ERR | grep -v -i "UNFINISHED" | grep -v -e ENOENT | grep -v -e "= -" | cut -d "\"" -f 2 | grep -e "$WREGEXP" | sort | uniq -u
+    fi
+###############################################################################
+  else
+    if [ $SYSNAME = "Linux" ];
+      then
+	grep "open\|creat" $TMPFILE | grep WR | grep -v -e "= -" | grep -v -i "UNFINISHED" | cut -d "\"" -f 2 | grep -v -e "$WREGEXP" | sort | uniq -u
+    elif [ $SYSNAME = "FreeBSD" ];
+      then
+	grep "open\|creat" $TMPFILE | grep WR | grep -v -e ERR | grep -v -i "UNFINISHED" | grep -v -e ENOENT | grep -v -e "= -" | cut -d "\"" -f 2 | grep -v -e "$WREGEXP" | sort | uniq -u
+    elif [ $SYSNAME = "SunOS" ];
+      then
+	grep "open\|creat" $TMPFILE | grep WR | grep -v -e ERR | grep -v -i "UNFINISHED" | grep -v -e ENOENT | grep -v -e "= -" | cut -d "\"" -f 2 | grep -v -e "$WREGEXP" | sort | uniq -u
+    fi
+  fi
+fi
+###############################################################################
+if [ $RFILES -eq 1 ]
+then
+    echo '=== Read files ==='
+    if [ $RBOLREGEXP -ne 1 ]
+    then
+      if [ $SYSNAME = "Linux" ];
+      then
+	grep "open\|creat" $TMPFILE | grep RD | grep -v -e "= -" | grep -v -i "UNFINISHED" | cut -d "\"" -f 2 | grep -e "$RREGEXP" | sort -u | uniq -u 
+      elif [ $SYSNAME = "FreeBSD" ];
+      then
+	grep "open\|creat" $TMPFILE | grep "RD" | grep -v "ERR\|ENOENT" | grep -v -i "UNFINISHED" | grep -v -e "= -" | cut -d "\"" -f 2 | grep "$RREGEXP" | sort -u | uniq -u
+      elif [ $SYSNAME = "SunOS" ];
+      then
+	grep "open\|creat" $TMPFILE | grep "RD" | grep -v "ERR\|ENOENT" | grep -v -i "UNFINISHED" | grep -v -e "= -" | cut -d "\"" -f 2 | grep "$RREGEXP" | sort -u | uniq -u
+      fi
+###############################################################################
+    else 
+      if [ $SYSNAME = "Linux" ];
+      then
+	grep "open\|creat" $TMPFILE | grep RD | grep -v -e "= -" | grep -v -i "UNFINISHED" | cut -d "\"" -f 2 | grep -v -e "$RREGEXP" | sort | uniq -u 
+      elif [ $SYSNAME = "FreeBSD" ];
+      then
+	grep "open\|creat" $TMPFILE | grep RD | grep -v -e ERR | grep -v -i "UNFINISHED" | grep -v -e ENOENT | grep -v -e "= -" | cut -d "\"" -f 2 | grep -v -e "$RREGEXP" | sort | uniq -u 
+      elif [ $SYSNAME = "SunOS" ];
+      then
+	grep "open\|creat" $TMPFILE | grep RD | grep -v -e ERR | grep -v -i "UNFINISHED" | grep -v -e ENOENT | grep -v -e "= -" | cut -d "\"" -f 2 | grep -v -e "$RREGEXP" | sort | uniq -u 
+      fi
+    fi
+fi
+###############################################################################
+if [ $STDIN -eq 1 ]
+then
+  trap "rm -f $TMPFILE" INT TERM EXIT
+fi
