@@ -1,2 +1,2 @@
 # Shell-procinfo
-School project 
+School project obtained 15/15 points 
